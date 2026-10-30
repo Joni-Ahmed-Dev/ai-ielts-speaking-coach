@@ -20,6 +20,11 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -27,6 +32,12 @@ jobs:
 
       - name: Install Bubblewrap CLI
         run: npm install -g @bubblewrap/cli
+
+      - name: Configure Bubblewrap paths
+        run: |
+          mkdir -p ~/.bubblewrap
+          printf '{"jdkPath":"%s","androidSdkPath":"%s"}' "$JAVA_HOME" "$ANDROID_SDK_ROOT" > ~/.bubblewrap/config.json
+          cat ~/.bubblewrap/config.json
 
       - name: Build APK with Bubblewrap
         env:

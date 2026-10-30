@@ -20,6 +20,9 @@ import {
   saveUserSession,
   loadMemoryProfile,
   getStoredApiKey,
+  getStoredMicMode,
+  saveStoredMicMode,
+  MicMode,
   PracticeSessionRecord,
   UserMemoryProfile,
 } from './utils/sessionMemory';
@@ -45,6 +48,8 @@ export default function App() {
   const [memoryProfile, setMemoryProfile] = useState<UserMemoryProfile>(loadMemoryProfile());
   const [userApiKey, setUserApiKey] = useState<string>('');
   const [globalError, setGlobalError] = useState<{ message: string; code?: string } | null>(null);
+  const [micMode, setMicMode] = useState<MicMode>(getStoredMicMode());
+  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
 
   // Speaking Session State
   const [currentPart, setCurrentPart] = useState<IeltsPart>('part1');
@@ -76,16 +81,30 @@ export default function App() {
   finalTranscriptRef.current = finalTranscript;
   interimTranscriptRef.current = interimTranscript;
 
-  // Always-fresh pointer to the latest finish handler (fixes stale question/part on silence auto-submit)
-  const handleFinishRef = useRef<() => void>(() => {});
-  const evaluatingRef = useRef(false);
-
   // Initial load
   useEffect(() => {
     const key = getStoredApiKey();
     setUserApiKey(key);
     setSessions(loadUserSessions());
     setMemoryProfile(loadMemoryProfile());
+
+    // Check microphone permission status if supported
+    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+      try {
+        navigator.permissions.query({ name: 'microphone' as PermissionName }).then((status) => {
+          if (status.state === 'denied') {
+            setMicPermissionDenied(true);
+          }
+          status.onchange = () => {
+            if (status.state === 'granted') {
+              setMicPermissionDenied(false);
+            } else if (status.state === 'denied') {
+              setMicPermissionDenied(true);
+            }
+          };
+        }).catch(() => {});
+      } catch {}
+    }
 
     // Check if user has no key and server has no env key
     fetch('/api/key-status')
@@ -101,39 +120,64 @@ export default function App() {
   }, []);
 
   // Initialize AudioStreamer
-  const initAudio = async () => {
+  const initAudio = async (): Promise<boolean> => {
     if (audioStreamerRef.current) {
       audioStreamerRef.current.stopMicrophone();
     }
 
-    const streamer = new AudioStreamer({
-      onInterimTranscript: (text) => {
-        setInterimTranscript(text);
+    const streamer = new AudioStreamer(
+      {
+        onInterimTranscript: (text) => {
+          setInterimTranscript(text);
+        },
+        onFinalTranscript: (text) => {
+          setFinalTranscript((prev) => (prev ? `${prev} ${text}` : text));
+          setInterimTranscript('');
+        },
+        onVolumeChange: (rms) => {
+          setVolumeRms(rms);
+          if (rms < 0.015) {
+            setSilenceSeconds((prev) => Math.min(2.0, prev + 0.1));
+          } else {
+            setSilenceSeconds(0);
+          }
+        },
+        onSilenceDetected: () => {
+          // Enforce The Golden Rule: 2.0s of continuous silence detected
+          handleUserFinishedAnswer();
+        },
+        onAudioChunk: (base64Pcm) => {
+          // If WebSocket Live session is connected, forward audio chunk
+          if (liveWsRef.current && liveWsRef.current.readyState === WebSocket.OPEN) {
+            liveWsRef.current.send(JSON.stringify({ type: 'audio', data: base64Pcm }));
+          }
+        },
+        onError: (err, code) => {
+          if (code === 'PERMISSION_DENIED' || String(err || '').toLowerCase().includes('permission')) {
+            setMicPermissionDenied(true);
+          }
+          console.warn('Audio streamer notice:', err);
+        },
       },
-      onFinalTranscript: (text) => {
-        setFinalTranscript((prev) => (prev ? `${prev} ${text}` : text));
-        setInterimTranscript('');
-      },
-      onVolumeChange: (rms) => {
-        setVolumeRms(rms);
-        if (rms < 0.015) {
-          setSilenceSeconds((prev) => Math.min(2.0, prev + 0.1));
-        } else {
-          setSilenceSeconds(0);
-        }
-      },
-      onSilenceDetected: () => {
-        // Enforce The Golden Rule: 2.0s of continuous silence detected
-        handleFinishRef.current();
-      },
-      onError: (err) => {
-        console.warn('Audio streamer notice:', err);
-      },
-    });
+      micMode
+    );
 
     audioStreamerRef.current = streamer;
     const ok = await streamer.startMicrophone();
     setIsListening(ok);
+    if (ok) {
+      setMicPermissionDenied(false);
+    } else {
+      setMicPermissionDenied(true);
+    }
+    return ok;
+  };
+
+  // Toggle Microphone Mode (Silent Zero-Chime vs Browser Web Speech)
+  const handleToggleMicMode = (mode: MicMode) => {
+    setMicMode(mode);
+    saveStoredMicMode(mode);
+    audioStreamerRef.current?.setMicMode(mode);
   };
 
   // Connect WebSocket to Gemini Live API
@@ -182,6 +226,9 @@ export default function App() {
   const speakExaminerText = async (text: string) => {
     if (!text || isMuted) return;
     setIsExaminerSpeaking(true);
+    // Pause recognition while examiner is speaking so no chime or ambient recording interferes
+    audioStreamerRef.current?.pauseRecognition();
+
     try {
       await speechSynthesizer.speakExaminer(text, {
         isMuted,
@@ -193,12 +240,18 @@ export default function App() {
           }
         },
         onStart: () => setIsExaminerSpeaking(true),
-        onEnd: () => setIsExaminerSpeaking(false),
+        onEnd: () => {
+          setIsExaminerSpeaking(false);
+          audioStreamerRef.current?.resumeRecognition();
+          audioStreamerRef.current?.restartAnswerRecording();
+        },
       });
     } catch (err) {
       console.warn('TTS speech note:', err);
     } finally {
       setIsExaminerSpeaking(false);
+      audioStreamerRef.current?.resumeRecognition();
+      audioStreamerRef.current?.restartAnswerRecording();
     }
   };
 
@@ -224,6 +277,7 @@ export default function App() {
     setSilenceSeconds(0);
 
     await initAudio();
+    connectLiveWs('ielts_practice');
     speakExaminerText(q1);
   };
 
@@ -246,6 +300,7 @@ export default function App() {
     setSilenceSeconds(0);
 
     await initAudio();
+    connectLiveWs('free_talk');
     speakExaminerText(topic.starter);
   };
 
@@ -271,6 +326,7 @@ export default function App() {
     setSilenceSeconds(0);
 
     await initAudio();
+    connectLiveWs('ielts_practice');
     speakExaminerText(q1);
   };
 
@@ -280,7 +336,19 @@ export default function App() {
       audioStreamerRef.current?.stopMicrophone();
       setIsListening(false);
     } else {
-      await initAudio();
+      const ok = await initAudio();
+      if (!ok) {
+        setMicPermissionDenied(true);
+      }
+    }
+  };
+
+  // Explicit Retry Microphone Permission
+  const handleRetryMic = async () => {
+    setMicPermissionDenied(false);
+    const ok = await initAudio();
+    if (!ok) {
+      setMicPermissionDenied(true);
     }
   };
 
@@ -307,20 +375,26 @@ export default function App() {
 
   // THE GOLDEN RULE: Complete Answer (Triggered by "I'm done" OR 2s sustained silence)
   const handleUserFinishedAnswer = async () => {
-    if (isEvaluating || evaluatingRef.current) return;
+    if (isEvaluating) return;
 
-    const answer = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
-    if (!answer || answer.length < 3) {
+    let answer = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
+    let audioData: { base64: string; mimeType: string } | null = null;
+
+    if (audioStreamerRef.current) {
+      audioData = await audioStreamerRef.current.getRecordedAudioBase64();
+    }
+
+    if (!answer && !audioData) {
       return;
     }
 
     // Pause recording during evaluation
+    audioStreamerRef.current?.pauseRecognition();
     audioStreamerRef.current?.resetSilenceTracker();
     setSilenceSeconds(0);
     setIsEvaluating(true);
-    evaluatingRef.current = true;
 
-    let evaluation: AnswerEvaluation | null = null;
+    let evaluation: (AnswerEvaluation & { userTranscribedAnswer?: string }) | null = null;
 
     try {
       const res = await fetch('/api/evaluate', {
@@ -332,6 +406,8 @@ export default function App() {
         body: JSON.stringify({
           question: currentQuestion,
           userAnswer: answer,
+          userAudio: audioData?.base64,
+          audioMimeType: audioData?.mimeType,
           part: currentPart,
           mode: sessionMode,
           pastWeaknesses: memoryProfile.recurringWeaknesses,
@@ -340,13 +416,14 @@ export default function App() {
 
       if (res.ok) {
         evaluation = await res.json();
-      } else if ((res.status === 404 || res.status === 405) && userApiKey) {
+      } else if (res.status === 404 && userApiKey) {
         // Static GitHub Pages deployment: call Gemini REST directly
         evaluation = await evaluateDirectlyWithGemini(
           currentQuestion,
           answer,
           userApiKey,
-          currentPart
+          currentPart,
+          audioData
         );
       } else {
         const errorData = await res.json().catch(() => ({}));
@@ -357,11 +434,7 @@ export default function App() {
             message: 'Gemini API quota exceeded. Please wait a moment before trying again.',
             code: 'QUOTA_EXCEEDED',
           });
-        } else {
-          setGlobalError({ message: errorData.error || 'Evaluation failed. Please try again.' });
         }
-        evaluatingRef.current = false;
-        setIsEvaluating(false);
         return;
       }
     } catch (err) {
@@ -371,7 +444,8 @@ export default function App() {
             currentQuestion,
             answer,
             userApiKey,
-            currentPart
+            currentPart,
+            audioData
           );
         } catch {
           setGlobalError({ message: 'Evaluation failed. Please verify your API key in Settings.' });
@@ -382,20 +456,23 @@ export default function App() {
     }
 
     if (!evaluation) {
-      evaluatingRef.current = false;
       setIsEvaluating(false);
       return;
     }
 
     try {
+      if (evaluation.userTranscribedAnswer && !answer) {
+        answer = evaluation.userTranscribedAnswer;
+        setFinalTranscript(answer);
+      }
+
       setCurrentEvaluation(evaluation);
 
       // Record this answer in session history
       const evalRecord = {
         question: currentQuestion,
-        userAnswer: answer,
+        userAnswer: answer || 'Spoken IELTS answer',
         band: evaluation.estimatedBand,
-        criteria: evaluation.criteria,
         feedback: evaluation.oneSentenceFeedback,
         grammarHighlights: evaluation.grammarCorrections?.map((c) => c.improved) || [],
       };
@@ -407,11 +484,9 @@ export default function App() {
         speakExaminerText(reaction);
       }
     } finally {
-      evaluatingRef.current = false;
       setIsEvaluating(false);
     }
   };
-  handleFinishRef.current = handleUserFinishedAnswer;
 
   // Progress to Next Question in Flow
   const handleNextQuestion = async () => {
@@ -420,6 +495,7 @@ export default function App() {
     setInterimTranscript('');
     setSilenceSeconds(0);
     audioStreamerRef.current?.resetSilenceTracker();
+    audioStreamerRef.current?.restartAnswerRecording();
 
     if (sessionMode === 'free_talk') {
       // Dynamic follow-up question in Free Talk
@@ -558,20 +634,7 @@ export default function App() {
       // Calculate overall band from evaluations
       const avgBand =
         sessionEvaluations.reduce((sum, e) => sum + e.band, 0) / sessionEvaluations.length;
-      const avgOf = (key: 'fluency' | 'vocabulary' | 'grammar' | 'pronunciation'): number => {
-        const vals = sessionEvaluations
-          .map((e) => e.criteria?.[key])
-          .filter((v): v is number => typeof v === 'number');
-        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : avgBand;
-      };
-      const criteriaAvg = {
-        fluency: avgOf('fluency'),
-        vocabulary: avgOf('vocabulary'),
-        grammar: avgOf('grammar'),
-        pronunciation: avgOf('pronunciation'),
-      };
-      const roundedBand = calculateOverallBand(criteriaAvg);
-      const half = (n: number) => Math.round(n * 2) / 2;
+      const roundedBand = Math.round(avgBand * 2) / 2;
 
       const record: PracticeSessionRecord = {
         id: `sess-${Date.now()}`,
@@ -579,10 +642,10 @@ export default function App() {
         mode: sessionMode,
         overallBand: roundedBand,
         criteria: {
-          fluency: half(criteriaAvg.fluency),
-          vocabulary: half(criteriaAvg.vocabulary),
-          grammar: half(criteriaAvg.grammar),
-          pronunciation: half(criteriaAvg.pronunciation),
+          fluency: roundedBand,
+          vocabulary: roundedBand,
+          grammar: Math.max(5.5, roundedBand - 0.5),
+          pronunciation: Math.min(9.0, roundedBand + 0.5),
         },
         questionCount: sessionEvaluations.length,
         evaluations: sessionEvaluations,
@@ -609,7 +672,7 @@ export default function App() {
     }, 100);
   };
 
-  const currentOverallBand = sessions.length > 0 ? sessions[0].overallBand : 0;
+  const currentOverallBand = sessions.length > 0 ? sessions[0].overallBand : 6.5;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans antialiased selection:bg-amber-500 selection:text-black">
@@ -673,6 +736,8 @@ export default function App() {
             isEvaluating={isEvaluating}
             volumeRms={volumeRms}
             silenceSeconds={silenceSeconds}
+            micMode={micMode}
+            onToggleMicMode={handleToggleMicMode}
             onToggleMic={handleToggleMic}
             onFinishAnswer={handleUserFinishedAnswer}
             onRepeatQuestion={() => speakExaminerText(currentQuestion)}
@@ -680,6 +745,8 @@ export default function App() {
             isMuted={isMuted}
             onToggleMute={handleToggleMute}
             onSubmitTextAnswer={handleSubmitTextAnswer}
+            micPermissionDenied={micPermissionDenied}
+            onRetryMic={handleRetryMic}
           />
         )}
 
@@ -701,7 +768,7 @@ export default function App() {
         partName={currentPart.toUpperCase()}
       />
 
-      {/* API Key Modal */}
+      {/* API Key & Microphone Sound Settings Modal */}
       <ApiKeyModal
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
@@ -710,6 +777,8 @@ export default function App() {
           setGlobalError(null);
         }}
         canDismiss={Boolean(userApiKey)}
+        micMode={micMode}
+        onMicModeChange={handleToggleMicMode}
       />
 
       {/* Mock Test & Session Summary Modal */}

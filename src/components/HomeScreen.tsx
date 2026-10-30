@@ -56,7 +56,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <div className="flex flex-col items-center justify-center p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800/80 shadow-inner">
             <span className="text-[10px] uppercase font-bold text-zinc-400">Current</span>
             <span className="text-2xl font-black text-amber-400 tracking-tight">
-              {currentBand > 0 ? formatBand(currentBand) : '—'}
+              {formatBand(currentBand)}
             </span>
             <span className="text-[10px] text-zinc-400">Target 7.0</span>
           </div>

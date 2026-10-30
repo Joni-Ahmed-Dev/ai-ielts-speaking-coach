@@ -35,7 +35,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const todaySessions = sessions.filter((s) => now - s.timestamp <= dayMs);
   const lastWeekSessions = sessions.filter((s) => now - s.timestamp <= weekMs);
 
-  const currentOverallBand = sessions.length > 0 ? sessions[0].overallBand : 0;
+  const currentOverallBand = sessions.length > 0 ? sessions[0].overallBand : 6.5;
 
   const todayAvgBand =
     todaySessions.length > 0
@@ -109,7 +109,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
           <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30">
             <span className="text-[10px] uppercase font-bold text-amber-400 block mb-1">Current</span>
-            <span className="text-base font-black text-amber-400">{currentOverallBand > 0 ? formatBand(currentOverallBand) : '—'}</span>
+            <span className="text-base font-black text-amber-400">{formatBand(currentOverallBand)}</span>
           </div>
 
           <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">

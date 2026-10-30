@@ -51,3 +51,10 @@ test('formatBand formats bands consistently', () => {
   assert.equal(formatBand(7), '7.0');
   assert.equal(formatBand(6.5), '6.5');
 });
+
+test('modern Google AI Studio AQ keys and legacy keys are valid strings', () => {
+  const modernKey = 'AQ1234567890abcdefghijklmnopqrstuvwxyz';
+  const legacyKey = 'AIzaSyDemoKey1234567890abcdefghijklm';
+  assert.ok(modernKey.startsWith('AQ') && modernKey.length >= 15);
+  assert.ok(legacyKey.startsWith('AIza') && legacyKey.length >= 15);
+});

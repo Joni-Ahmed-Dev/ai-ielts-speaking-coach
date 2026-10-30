@@ -12,6 +12,9 @@ import {
   Keyboard,
   Send,
   HelpCircle,
+  BellOff,
+  ShieldAlert,
+  RefreshCw,
 } from 'lucide-react';
 import { Part2CueCard } from '../data/ieltsTopics';
 
@@ -27,6 +30,8 @@ interface SpeakingScreenProps {
   isEvaluating: boolean;
   volumeRms: number;
   silenceSeconds: number; // 0 to 2.0
+  micMode?: 'silent' | 'speech_recognition';
+  onToggleMicMode?: (mode: 'silent' | 'speech_recognition') => void;
   onToggleMic: () => void;
   onFinishAnswer: () => void;
   onRepeatQuestion: () => void;
@@ -34,6 +39,8 @@ interface SpeakingScreenProps {
   isMuted: boolean;
   onToggleMute: () => void;
   onSubmitTextAnswer?: (text: string) => void;
+  micPermissionDenied?: boolean;
+  onRetryMic?: () => Promise<boolean | void> | void;
 }
 
 export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
@@ -48,6 +55,8 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
   isEvaluating,
   volumeRms,
   silenceSeconds,
+  micMode = 'silent',
+  onToggleMicMode,
   onToggleMic,
   onFinishAnswer,
   onRepeatQuestion,
@@ -55,6 +64,8 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
   isMuted,
   onToggleMute,
   onSubmitTextAnswer,
+  micPermissionDenied = false,
+  onRetryMic,
 }) => {
   // Part 2 Prep Countdown (60 seconds) & Speaking Timer (120 seconds)
   const [part2Phase, setPart2Phase] = useState<'prep' | 'speaking' | 'none'>('none');
@@ -63,6 +74,14 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
   const [showTextFallback, setShowTextFallback] = useState(false);
   const [manualText, setManualText] = useState('');
   const [prepNotes, setPrepNotes] = useState('');
+  const [isRetryingMic, setIsRetryingMic] = useState(false);
+
+  // If mic permission is denied, automatically enable text answer mode so student is never stuck!
+  useEffect(() => {
+    if (micPermissionDenied) {
+      setShowTextFallback(true);
+    }
+  }, [micPermissionDenied]);
 
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
 
@@ -241,13 +260,41 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
           className="h-28 overflow-y-auto p-3.5 rounded-2xl bg-zinc-950/70 border border-zinc-800/70 text-left scrollbar-none transition-all flex flex-col justify-end"
         >
           <div className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 mb-1 flex items-center justify-between">
-            <span>Your Live Transcript</span>
-            {isListening && (
-              <span className="flex items-center gap-1 text-emerald-400 lowercase font-normal">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                streaming
-              </span>
-            )}
+            <span className="flex items-center gap-1.5">
+              <span>{micMode === 'silent' ? 'ভয়েস রেকর্ডিং স্ট্যাটাস' : 'Your Live Transcript'}</span>
+            </span>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onToggleMicMode?.(micMode === 'silent' ? 'speech_recognition' : 'silent')}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition ${
+                  micMode === 'silent'
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                    : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:text-white'
+                }`}
+                title="মাইক্রোফোন টুং টুং আওয়াজ নিয়ন্ত্রণ করুন"
+              >
+                {micMode === 'silent' ? (
+                  <>
+                    <BellOff className="w-2.5 h-2.5 text-amber-400" />
+                    <span>নিঃশব্দ মোড (No Beep)</span>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-2.5 h-2.5 text-amber-400" />
+                    <span>ওয়েব স্পিচ</span>
+                  </>
+                )}
+              </button>
+
+              {isListening && (
+                <span className="flex items-center gap-1 text-emerald-400 lowercase font-normal">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  recording
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="text-xs leading-relaxed font-sans min-h-[3rem]">
@@ -257,7 +304,19 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
                 <span className="text-amber-300/80 italic animate-pulse">{interimTranscript}</span>
               </>
             ) : isListening ? (
-              <span className="text-zinc-400 italic">Listening... Start speaking your answer naturally.</span>
+              micMode === 'silent' ? (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 text-emerald-300 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>ভয়েস রেকর্ড হচ্ছে (সম্পূর্ণ নিঃশব্দ — কোনো টুং টুং নেই)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">
+                    স্বাভাবিকভাবে ইংরেজিতে উত্তর দিন। কথা শেষ হলে ২ সেকেন্ড থামুন অথবা নিচে "I'm Done" চাপুন।
+                  </p>
+                </div>
+              ) : (
+                <span className="text-zinc-400 italic">Listening... Start speaking your answer naturally.</span>
+              )
             ) : isExaminerSpeaking ? (
               <span className="text-amber-400/90 italic flex items-center gap-1.5">
                 <Volume2 className="w-3.5 h-3.5 animate-bounce" />
@@ -268,6 +327,53 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
             )}
           </div>
         </div>
+
+        {/* Microphone Permission Help Banner */}
+        {micPermissionDenied && (
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/60 via-zinc-900 to-zinc-900 border border-amber-500/40 shadow-xl space-y-3 text-left">
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold text-amber-300">
+                  মাইক্রোফোন পারমিশন প্রয়োজন (Microphone Access Blocked)
+                </h4>
+                <p className="text-[11px] text-zinc-300 leading-relaxed">
+                  ব্রাউজারে মাইক্রোফোন অনুমতি বন্ধ রয়েছে। অ্যাড্রেস বারের লক (<span className="text-amber-300 font-bold">🔒</span>) অথবা সাইট সেটিংস আইকনে ট্যাপ করে <strong>Microphone: Allow</strong> করুন।
+                </p>
+                <p className="text-[10px] text-zinc-400">
+                  অথবা আপনি সরাসরি নিচে টাইপ করেও আপনার উত্তর জমা দিতে পারেন।
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsRetryingMic(true);
+                  try {
+                    await onRetryMic?.();
+                  } finally {
+                    setIsRetryingMic(false);
+                  }
+                }}
+                disabled={isRetryingMic}
+                className="flex-1 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRetryingMic ? 'animate-spin' : ''}`} />
+                <span>অনুমতি আবার চান / Try Again</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowTextFallback(true)}
+                className="py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition"
+              >
+                কীবোর্ডে লিখুন
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 2-Second Silence Progress Bar (Visual feedback for The Golden Rule) */}
         {isListening && silenceSeconds > 0.4 && (
@@ -317,22 +423,32 @@ export const SpeakingScreen: React.FC<SpeakingScreenProps> = ({
           )}
 
           <button
-            onClick={onToggleMic}
+            onClick={async () => {
+              if (micPermissionDenied && onRetryMic) {
+                await onRetryMic();
+              } else {
+                onToggleMic();
+              }
+            }}
             disabled={isEvaluating}
             className={`relative z-10 w-24 h-24 rounded-full flex flex-col items-center justify-center shadow-2xl transition-all duration-300 active:scale-95 focus:outline-none ${
-              isListening
+              micPermissionDenied
+                ? 'bg-rose-950/80 hover:bg-rose-900 border-2 border-rose-500 text-rose-300 shadow-rose-500/20'
+                : isListening
                 ? 'bg-gradient-to-tr from-amber-500 via-amber-400 to-amber-300 text-black shadow-amber-500/30 ring-4 ring-amber-400/40'
                 : 'bg-zinc-800 hover:bg-zinc-750 text-zinc-300 border-2 border-zinc-700 shadow-black/60'
             }`}
-            aria-label={isListening ? 'Mute or pause microphone' : 'Start speaking'}
+            aria-label={micPermissionDenied ? 'Retry microphone permission' : isListening ? 'Mute or pause microphone' : 'Start speaking'}
           >
-            {isListening ? (
+            {micPermissionDenied ? (
+              <ShieldAlert className="w-8 h-8 text-rose-400 animate-pulse" />
+            ) : isListening ? (
               <Mic className="w-9 h-9 animate-pulse" />
             ) : (
               <MicOff className="w-8 h-8 text-zinc-400" />
             )}
-            <span className="text-[10px] font-bold uppercase tracking-wider mt-1">
-              {isListening ? 'Listening' : 'Tap to talk'}
+            <span className="text-[10px] font-bold uppercase tracking-wider mt-1 text-center px-1">
+              {micPermissionDenied ? 'Allow Mic' : isListening ? 'Listening' : 'Tap to talk'}
             </span>
           </button>
         </div>

@@ -23,7 +23,7 @@ export const InstallModal: React.FC<InstallModalProps> = ({ isOpen, onClose }) =
   const [isInstalled, setIsInstalled] = useState(false);
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'success' | 'error'>('idle');
   const [copiedGit, setCopiedGit] = useState(false);
-  const appUrl = window.location.origin;
+  const appUrl = 'https://ais-pre-3ecnopy53lnirf5x6gvug7-800112478369.asia-east1.run.app';
 
   useEffect(() => {
     // Detect standalone mode

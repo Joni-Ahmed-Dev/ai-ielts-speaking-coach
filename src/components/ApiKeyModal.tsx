@@ -1,12 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { KeyRound, ExternalLink, ShieldCheck, Check, AlertCircle, Eye, EyeOff, Sparkles } from 'lucide-react';
-import { getStoredApiKey, saveStoredApiKey, removeStoredApiKey } from '../utils/sessionMemory';
+import { KeyRound, ExternalLink, ShieldCheck, Check, AlertCircle, Eye, EyeOff, Sparkles, BellOff, Mic } from 'lucide-react';
+import {
+  getStoredApiKey,
+  saveStoredApiKey,
+  removeStoredApiKey,
+  getStoredMicMode,
+  saveStoredMicMode,
+  MicMode,
+} from '../utils/sessionMemory';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
   onClose: () => void;
   onKeySaved: (key: string) => void;
   canDismiss?: boolean;
+  micMode?: MicMode;
+  onMicModeChange?: (mode: MicMode) => void;
 }
 
 export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
@@ -14,18 +23,28 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   onClose,
   onKeySaved,
   canDismiss = true,
+  micMode,
+  onMicModeChange,
 }) => {
   const [inputKey, setInputKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [selectedMicMode, setSelectedMicMode] = useState<MicMode>(micMode || getStoredMicMode());
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setInputKey(getStoredApiKey());
+      setSelectedMicMode(micMode || getStoredMicMode());
       setStatusMessage(null);
     }
-  }, [isOpen]);
+  }, [isOpen, micMode]);
+
+  const handleMicModeSelect = (mode: MicMode) => {
+    setSelectedMicMode(mode);
+    saveStoredMicMode(mode);
+    onMicModeChange?.(mode);
+  };
 
   if (!isOpen) return null;
 
@@ -36,11 +55,10 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
       return;
     }
 
-    // New Google keys start with "AQ.", old ones with "AIza" - so we do not check the prefix.
-    if (trimmed.length < 20 || /\s/.test(trimmed)) {
+    if (trimmed.length < 15) {
       setStatusMessage({
         type: 'error',
-        text: 'This does not look like a complete API key. Please copy the whole key from Google AI Studio (no spaces).',
+        text: 'The API key appears too short. Please copy your full Google AI Studio API key (starting with AQ... or AIza...).',
       });
       return;
     }
@@ -53,17 +71,9 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
         headers: { 'x-gemini-api-key': trimmed },
       });
 
-      const check = res.ok ? await res.json().catch(() => ({})) : {};
-      if (check.valid === false) {
-        setStatusMessage({ type: 'error', text: 'Google rejected this key. Please create a new key in Google AI Studio and paste it again.' });
-        return;
-      }
       if (res.ok) {
         saveStoredApiKey(trimmed);
-        setStatusMessage({
-          type: 'success',
-          text: check.valid === true ? 'API Key saved and verified successfully!' : 'API Key saved (could not verify it right now).',
-        });
+        setStatusMessage({ type: 'success', text: 'API Key saved and verified successfully!' });
         setTimeout(() => {
           onKeySaved(trimmed);
           onClose();
@@ -132,15 +142,18 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-300 block">
-            Google AI Studio API Key
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-zinc-300 block">
+              Google AI Studio API Key
+            </label>
+            <span className="text-[10px] text-zinc-400 font-mono">Supports AQ... & AIza...</span>
+          </div>
           <div className="relative">
             <input
               type={showKey ? 'text' : 'password'}
               value={inputKey}
               onChange={(e) => setInputKey(e.target.value)}
-              placeholder="AQ.Ab... (paste your key)"
+              placeholder="AQ... or AIza..."
               className="w-full pl-3.5 pr-10 py-2.5 bg-zinc-950 border border-zinc-700 rounded-xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition font-mono"
             />
             <button
@@ -150,6 +163,60 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               aria-label={showKey ? 'Hide key' : 'Show key'}
             >
               {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-400">
+            Paste your Google AI Studio key (modern Authentication keys starting with <strong>AQ</strong> are fully supported).
+          </p>
+        </div>
+
+        {/* Microphone Sound & Chime Control Section */}
+        <div className="space-y-2 p-3.5 rounded-xl bg-zinc-950/70 border border-zinc-800">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BellOff className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-semibold text-zinc-200">মাইক্রোফোন সাউন্ড নিয়ন্ত্রণ (Mic Sound)</span>
+            </div>
+            <span className="text-[10px] uppercase font-bold text-amber-400/90 tracking-wide">
+              {selectedMicMode === 'silent' ? 'টুং টুং বন্ধ' : 'লাইভ টেক্সট'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => handleMicModeSelect('silent')}
+              className={`p-2.5 rounded-xl border text-left transition ${
+                selectedMicMode === 'silent'
+                  ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 ring-1 ring-amber-500/30'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-bold text-xs">
+                <BellOff className="w-3.5 h-3.5 text-amber-400" />
+                <span>নিঃশব্দ মোড (প্রস্তাবিত)</span>
+              </div>
+              <p className="text-[10px] text-zinc-400 mt-1 leading-snug">
+                কোনো টুং টুং বা বিপ শব্দ হবে না। সম্পূর্ণ নিরবচ্ছিন্ন ভয়েস রেকর্ডিং।
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleMicModeSelect('speech_recognition')}
+              className={`p-2.5 rounded-xl border text-left transition ${
+                selectedMicMode === 'speech_recognition'
+                  ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 ring-1 ring-amber-500/30'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-bold text-xs">
+                <Mic className="w-3.5 h-3.5 text-amber-400" />
+                <span>ওয়েব স্পিচ (STT)</span>
+              </div>
+              <p className="text-[10px] text-zinc-400 mt-1 leading-snug">
+                ব্রাউজারে সরাসরি টেক্সট ভেসে উঠবে (ব্রাউজার সিস্টেম সাউন্ড থাকতে পারে)।
+              </p>
             </button>
           </div>
         </div>

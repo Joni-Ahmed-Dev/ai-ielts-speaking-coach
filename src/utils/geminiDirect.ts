@@ -3,23 +3,27 @@
  * Allows the app to work seamlessly without an active Node.js server.
  */
 
-import { AnswerEvaluation, calculateOverallBand } from './ieltsScoring';
+import { AnswerEvaluation } from './ieltsScoring';
 
 export async function evaluateDirectlyWithGemini(
   question: string,
   userAnswer: string,
   apiKey: string,
-  part: string = 'Part 1'
-): Promise<AnswerEvaluation> {
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent';
+  part: string = 'Part 1',
+  userAudio?: { base64: string; mimeType: string } | null
+): Promise<AnswerEvaluation & { userTranscribedAnswer?: string }> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(
+    apiKey
+  )}`;
 
-  const prompt = `You are a certified IELTS Speaking Examiner. Evaluate the following response.
+  const prompt = `You are a certified IELTS Speaking Examiner. Evaluate the candidate's response.
 Question: "${question}"
-Candidate Answer: "${userAnswer}"
+${userAnswer ? `Candidate Answer: "${userAnswer}"` : 'Please transcribe the candidate response from audio into English (put in "userTranscribedAnswer") and evaluate.'}
 Part: ${part}
 
 Output ONLY valid JSON matching this schema:
 {
+  "userTranscribedAnswer": string (transcribed candidate answer if audio provided),
   "estimatedBand": number,
   "oneSentenceFeedback": string,
   "criteria": {
@@ -48,12 +52,23 @@ Output ONLY valid JSON matching this schema:
   "recurringHabitsNoticed": [string],
   "disclaimer": "Estimated band score based on IELTS rubric. Practice evaluation only."
 }
-IMPORTANT: You only see a text transcript, so give pronunciation as a cautious estimate. For grammarCorrections, explain the rule in clear BENGALI (বাংলা).`;
+IMPORTANT: For grammarCorrections, explain the rule in clear BENGALI (বাংলা).`;
+
+  const parts: any[] = [];
+  if (userAudio) {
+    parts.push({
+      inline_data: {
+        mime_type: userAudio.mimeType,
+        data: userAudio.base64,
+      },
+    });
+  }
+  parts.push({ text: prompt });
 
   const body = {
     contents: [
       {
-        parts: [{ text: prompt }],
+        parts,
       },
     ],
     generationConfig: {
@@ -63,7 +78,7 @@ IMPORTANT: You only see a text transcript, so give pronunciation as a cautious e
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
@@ -76,8 +91,5 @@ IMPORTANT: You only see a text transcript, so give pronunciation as a cautious e
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error('Empty response from Gemini API');
 
-  const result = JSON.parse(text);
-  if (result.criteria) result.estimatedBand = calculateOverallBand(result.criteria);
-  result.disclaimer = 'Estimated from a text transcript only. Pronunciation and pause scores are rough estimates. Not an official rating.';
-  return result;
+  return JSON.parse(text);
 }

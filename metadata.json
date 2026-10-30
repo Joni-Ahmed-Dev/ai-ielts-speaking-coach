@@ -1,0 +1,6 @@
+{
+  "name": "AI IELTS Speaking Coach",
+  "description": "Personal AI tutor for IELTS Speaking practice and Free Talk with real-time speech-to-speech, strict non-interruption turn-taking, Bengali grammar explanations, and band tracking.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

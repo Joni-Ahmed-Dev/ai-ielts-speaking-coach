@@ -1,0 +1,21 @@
+{
+  "id": "./",
+  "name": "AI IELTS Speaking Coach",
+  "short_name": "IELTS Coach",
+  "description": "Personal AI tutor for IELTS Speaking practice and Free Talk with real-time speech conversation.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "512x512 192x192 180x180",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -43,7 +43,7 @@ jobs:
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ieltscoach123
           BUBBLEWRAP_KEY_PASSWORD: ieltscoach123
-        run: printf 'n\n%.0s' {1..10} | bubblewrap build --manifest=./twa-manifest.json --skipPwaValidation
+        run: printf 'y\n%.0s' {1..10} | bubblewrap build --manifest=./twa-manifest.json --skipPwaValidation
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
